@@ -94,6 +94,14 @@ python main.py
 - Native support: `.wav`, `.flac`, `.ogg`
 - Requires `ffmpeg`: `.mp3`, `.aac`, `.m4a`, and most other compressed formats
 
+## Known Issues
+
+### Discord noise cancellation may filter playback audio
+
+Discord noise suppression or noise cancellation can treat soundboard playback as background noise and filter it out before other users hear it.
+
+- If playback seems too quiet, cut off, or does not reach Discord correctly, disable Discord noise suppression or noise cancellation in `User Settings` -> `Voice & Video`
+
 ## Troubleshooting
 
 ### VB-Cable not found
