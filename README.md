@@ -119,3 +119,24 @@ python main.py
 - Verify `CABLE Output` exists as a recording device
 - Check Discord input sensitivity and noise suppression settings
 - Test the signal in `Windows Sound Settings` before using Discord
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
+
+### Third-Party Licenses
+
+| Library | License |
+|---|---|
+| [customtkinter](https://github.com/TomSchimansky/CustomTkinter) | MIT |
+| [sounddevice](https://github.com/spatialaudio/python-sounddevice) | MIT |
+| [soundfile](https://github.com/bastibe/python-soundfile) | BSD-3-Clause (uses [libsndfile](http://www.mega-nerd.com/libsndfile/) under LGPL-2.1+) |
+| [pydub](https://github.com/jiaaro/pydub) | MIT |
+| [numpy](https://github.com/numpy/numpy) | BSD-3-Clause |
+| [pycaw](https://github.com/AndreMiras/pycaw) | MIT |
+| [comtypes](https://github.com/enthought/comtypes) | MIT |
+
+This project also relies on optional external tools not distributed with the source code:
+
+- [FFmpeg](https://ffmpeg.org/) — LGPL 2.1+ or GPL depending on build configuration
+- [VB-Audio Virtual Cable](https://vb-audio.com/Cable/) — Freeware (donationware)

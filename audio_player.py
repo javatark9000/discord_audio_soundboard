@@ -132,7 +132,7 @@ class AudioPlayer:
                 on_finished(interrupted)
         except Exception as exc:
             interrupted = self._stop_requested.is_set()
-            if on_error is not None:
+            if on_error is not None and not interrupted:
                 on_error(exc)
             elif not interrupted:
                 raise
