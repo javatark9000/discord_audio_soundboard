@@ -1,0 +1,7 @@
+customtkinter
+sounddevice
+soundfile
+pydub
+numpy
+pycaw
+comtypes
