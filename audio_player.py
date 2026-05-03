@@ -68,6 +68,40 @@ def find_output_device_index(name_hint: str = "CABLE Input") -> tuple[int, str]:
     )
 
 
+def find_default_speaker_index(exclude_hint: str = "cable") -> tuple[int, str] | None:
+    """Return the system's default output device index, excluding VB-Cable.
+
+    Falls back to the first available output device that does not match
+    the exclude hint. Returns ``None`` if no suitable speaker is found.
+    """
+    normalized_exclude = exclude_hint.strip().lower()
+
+    try:
+        default_output = sd.default.device[1]
+    except Exception:
+        default_output = None
+
+    if isinstance(default_output, int) and default_output >= 0:
+        try:
+            info = sd.query_devices(default_output)
+            if (
+                info.get("max_output_channels", 0) > 0
+                and normalized_exclude not in info["name"].lower()
+            ):
+                return default_output, info["name"]
+        except Exception:
+            pass
+
+    for index, device in enumerate(sd.query_devices()):
+        if device["max_output_channels"] <= 0:
+            continue
+        if normalized_exclude in device["name"].lower():
+            continue
+        return index, device["name"]
+
+    return None
+
+
 class AudioPlayer:
     def __init__(self) -> None:
         self._audio_data: Optional[np.ndarray] = None
@@ -88,7 +122,7 @@ class AudioPlayer:
 
     def play(
         self,
-        device_index: int,
+        device_indices: list[int],
         volume: float = 1.0,
         on_finished: Optional[AudioFinishedCallback] = None,
         on_error: Optional[AudioErrorCallback] = None,
@@ -98,13 +132,15 @@ class AudioPlayer:
                 raise AudioPlayerError("Audio is already playing.")
             if self._audio_data is None or self._sample_rate is None:
                 raise AudioPlayerError("Load an audio file before starting playback.")
+            if not device_indices:
+                raise AudioPlayerError("At least one output device is required.")
 
             audio_data = np.clip(self._audio_data * volume, -1.0, 1.0).astype(np.float32)
             sample_rate = self._sample_rate
             self._stop_requested.clear()
             self._worker = threading.Thread(
                 target=self._playback_worker,
-                args=(audio_data, sample_rate, device_index, on_finished, on_error),
+                args=(audio_data, sample_rate, list(device_indices), on_finished, on_error),
                 daemon=True,
             )
             self._worker.start()
@@ -114,30 +150,66 @@ class AudioPlayer:
             return
 
         self._stop_requested.set()
-        sd.stop()
+
+    def _stream_to_device(
+        self,
+        audio_data: np.ndarray,
+        sample_rate: int,
+        device_index: int,
+        errors: list[Exception],
+    ) -> None:
+        try:
+            channels = audio_data.shape[1]
+            block_size = 2048
+            with sd.OutputStream(
+                samplerate=sample_rate,
+                channels=channels,
+                device=device_index,
+                dtype="float32",
+                blocksize=block_size,
+            ) as stream:
+                total_frames = audio_data.shape[0]
+                offset = 0
+                while offset < total_frames:
+                    if self._stop_requested.is_set():
+                        break
+                    end = min(offset + block_size, total_frames)
+                    stream.write(audio_data[offset:end])
+                    offset = end
+        except Exception as exc:
+            if not self._stop_requested.is_set():
+                errors.append(exc)
 
     def _playback_worker(
         self,
         audio_data: np.ndarray,
         sample_rate: int,
-        device_index: int,
+        device_indices: list[int],
         on_finished: Optional[AudioFinishedCallback],
         on_error: Optional[AudioErrorCallback],
     ) -> None:
-        interrupted = False
+        errors: list[Exception] = []
+        threads: list[threading.Thread] = []
         try:
-            sd.play(audio_data, samplerate=sample_rate, device=device_index, blocking=True)
+            for device_index in device_indices:
+                thread = threading.Thread(
+                    target=self._stream_to_device,
+                    args=(audio_data, sample_rate, device_index, errors),
+                    daemon=True,
+                )
+                thread.start()
+                threads.append(thread)
+
+            for thread in threads:
+                thread.join()
+
             interrupted = self._stop_requested.is_set()
-            if on_finished is not None:
+            if errors and not interrupted:
+                if on_error is not None:
+                    on_error(errors[0])
+            elif on_finished is not None:
                 on_finished(interrupted)
-        except Exception as exc:
-            interrupted = self._stop_requested.is_set()
-            if on_error is not None and not interrupted:
-                on_error(exc)
-            elif not interrupted:
-                raise
         finally:
-            sd.stop()
             with self._lock:
                 self._worker = None
                 self._stop_requested.clear()

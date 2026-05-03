@@ -7,7 +7,12 @@ from tkinter import filedialog, messagebox, simpledialog
 
 import customtkinter as ctk
 
-from audio_player import AudioPlayer, AudioPlayerError, find_output_device_index
+from audio_player import (
+    AudioPlayer,
+    AudioPlayerError,
+    find_default_speaker_index,
+    find_output_device_index,
+)
 from config_manager import SoundEntry, load_config, save_config
 from device_manager import (
     DeviceManagerError,
@@ -132,6 +137,8 @@ class DiscordAudioSoundboardApp(ctk.CTk):
         self.after_stop_action: Callable[[], None] | None = None
         self.is_closing = False
         self._sound_grid_columns = DEFAULT_CARD_COLUMNS
+        self._resize_after_id: str | None = None
+        self._last_window_width: int = 0
 
         current_mic_name = self._safe_current_mic_name()
 
@@ -244,8 +251,7 @@ class DiscordAudioSoundboardApp(ctk.CTk):
 
         self.sound_cards.clear()
 
-        for column in range(self._sound_grid_columns):
-            self.sounds_frame.grid_columnconfigure(column, weight=1)
+        self._configure_grid_columns()
 
         if not self.app_config.sounds:
             empty_label = ctk.CTkLabel(
@@ -271,6 +277,25 @@ class DiscordAudioSoundboardApp(ctk.CTk):
             card.set_active(sound.id == self.active_sound_id)
             self.sound_cards[sound.id] = card
 
+    def _configure_grid_columns(self) -> None:
+        active_columns = self._sound_grid_columns
+        for column in range(MAX_CARD_COLUMNS + 1):
+            weight = 1 if column < active_columns else 0
+            self.sounds_frame.grid_columnconfigure(column, weight=weight)
+
+    def _relayout_sound_cards(self) -> None:
+        if not self.sound_cards:
+            return
+
+        self._configure_grid_columns()
+        for index, sound in enumerate(self.app_config.sounds):
+            card = self.sound_cards.get(sound.id)
+            if card is None:
+                continue
+            row = index // self._sound_grid_columns
+            column = index % self._sound_grid_columns
+            card.grid_configure(row=row, column=column)
+
     def _update_volume_label(self) -> None:
         self.volume_text_var.set(f"{int(self.volume_var.get())}%")
 
@@ -283,11 +308,30 @@ class DiscordAudioSoundboardApp(ctk.CTk):
         if _event.widget is not self:
             return
 
+        current_width = self.winfo_width()
+        if current_width == self._last_window_width:
+            return
+        self._last_window_width = current_width
+
+        if self._resize_after_id is not None:
+            try:
+                self.after_cancel(self._resize_after_id)
+            except tk.TclError:
+                pass
+        self._resize_after_id = self.after(80, self._apply_resize_layout)
+
+    def _apply_resize_layout(self) -> None:
+        self._resize_after_id = None
+        if self.is_closing:
+            return
+
         available_width = max(self.winfo_width() - 140, CARD_MIN_WIDTH)
         columns = max(1, min(MAX_CARD_COLUMNS, available_width // CARD_MIN_WIDTH))
-        if columns != self._sound_grid_columns:
-            self._sound_grid_columns = columns
-            self._render_sound_cards()
+        if columns == self._sound_grid_columns:
+            return
+
+        self._sound_grid_columns = columns
+        self._relayout_sound_cards()
 
     def _schedule_callback(self, callback, *args) -> None:
         if self.is_closing:
@@ -399,10 +443,20 @@ class DiscordAudioSoundboardApp(ctk.CTk):
             self.player.load_audio(sound.file_path)
             virtual_microphone = find_virtual_cable()
             playback_device_index, playback_device_name = find_output_device_index()
+            speaker_info = find_default_speaker_index()
             self.previous_microphone_snapshot = snapshot_default_recording_devices()
             set_default_recording_device(virtual_microphone.id)
+
+            device_indices = [playback_device_index]
+            speaker_label = "not available"
+            if speaker_info is not None:
+                speaker_index, speaker_name = speaker_info
+                if speaker_index != playback_device_index:
+                    device_indices.append(speaker_index)
+                    speaker_label = speaker_name
+
             self.player.play(
-                device_index=playback_device_index,
+                device_indices=device_indices,
                 volume=self.volume_var.get() / 100.0,
                 on_finished=lambda interrupted: self._schedule_callback(
                     self._on_playback_finished, interrupted
@@ -425,7 +479,9 @@ class DiscordAudioSoundboardApp(ctk.CTk):
         self.active_sound_id = sound.id
         self.status_var.set(f'Playing "{sound.display_name}" through VB-Cable...')
         self.microphone_var.set(f"Current microphone: {virtual_microphone.name}")
-        self.playback_device_var.set(f"Virtual playback device: {playback_device_name}")
+        self.playback_device_var.set(
+            f"Virtual playback device: {playback_device_name}\nLocal speaker: {speaker_label}"
+        )
         self._refresh_card_states()
 
     def _stop_current_playback(self) -> None:
