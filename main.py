@@ -2,10 +2,27 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-import tkinter as tk
-from tkinter import filedialog, messagebox, simpledialog
+import sys
 
-import customtkinter as ctk
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
+from PySide6.QtGui import QCloseEvent, QFont, QResizeEvent
+from PySide6.QtWidgets import (
+    QApplication,
+    QFileDialog,
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSlider,
+    QVBoxLayout,
+    QWidget,
+)
 
 from audio_player import (
     AudioPlayer,
@@ -24,110 +41,224 @@ from device_manager import (
 )
 
 
-SUPPORTED_FILE_TYPES = [
-    ("Audio files", "*.mp3 *.wav *.ogg *.flac *.aac *.m4a"),
-    ("All files", "*.*"),
-]
+SUPPORTED_FILE_FILTER = "Audio files (*.mp3 *.wav *.ogg *.flac *.aac *.m4a);;All files (*.*)"
 DEFAULT_CARD_COLUMNS = 3
 MAX_CARD_COLUMNS = 4
 CARD_MIN_WIDTH = 220
 
+DARK_QSS = """
+QWidget {
+    background-color: #0f172a;
+    color: #e5e7eb;
+    font-family: Segoe UI, Arial, sans-serif;
+    font-size: 14px;
+}
 
-class SoundCard(ctk.CTkFrame):
+QFrame#Container,
+QFrame#Toolbar,
+QFrame#StatusFrame {
+    background-color: #111827;
+    border: 1px solid #1f2937;
+    border-radius: 18px;
+}
+
+QFrame#TransparentFrame {
+    background-color: transparent;
+    border: none;
+}
+
+QFrame#SoundCard {
+    background-color: #111827;
+    border: 1px solid #374151;
+    border-radius: 16px;
+}
+
+QFrame#SoundCard[active="true"] {
+    background-color: #1f2937;
+    border: 2px solid #2563eb;
+}
+
+QLabel {
+    background-color: transparent;
+    border: none;
+}
+
+QLabel#MutedLabel {
+    color: #9ca3af;
+}
+
+QPushButton {
+    background-color: #2563eb;
+    border: 1px solid #2563eb;
+    border-radius: 8px;
+    color: #f9fafb;
+    font-weight: 600;
+    min-height: 34px;
+    padding: 6px 12px;
+}
+
+QPushButton:hover {
+    background-color: #1d4ed8;
+    border-color: #1d4ed8;
+}
+
+QPushButton:disabled {
+    background-color: #374151;
+    border-color: #374151;
+    color: #9ca3af;
+}
+
+QPushButton#DangerButton {
+    background-color: #9b1c1c;
+    border-color: #9b1c1c;
+}
+
+QPushButton#DangerButton:hover {
+    background-color: #7f1d1d;
+    border-color: #7f1d1d;
+}
+
+QPushButton#OutlineButton {
+    background-color: transparent;
+    border: 1px solid #4b5563;
+    color: #d1d5db;
+}
+
+QPushButton#OutlineButton:hover {
+    background-color: #1f2937;
+    border-color: #6b7280;
+}
+
+QScrollArea {
+    background-color: #111827;
+    border: 1px solid #1f2937;
+    border-radius: 16px;
+}
+
+QScrollArea > QWidget > QWidget {
+    background-color: #111827;
+}
+
+QScrollBar:vertical {
+    background: #111827;
+    border: none;
+    width: 12px;
+    margin: 10px 0 10px 0;
+}
+
+QScrollBar::handle:vertical {
+    background: #374151;
+    border-radius: 6px;
+    min-height: 24px;
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+
+QSlider::groove:horizontal {
+    background: #374151;
+    border-radius: 4px;
+    height: 8px;
+}
+
+QSlider::handle:horizontal {
+    background: #2563eb;
+    border: 2px solid #93c5fd;
+    border-radius: 8px;
+    margin: -5px 0;
+    width: 16px;
+}
+"""
+
+
+class SoundCard(QFrame):
     def __init__(
         self,
-        master,
         sound: SoundEntry,
         on_play: Callable[[str], None],
         on_stop: Callable[[str], None],
         on_edit: Callable[[str], None],
         on_remove: Callable[[str], None],
+        parent: QWidget | None = None,
     ) -> None:
-        super().__init__(master, corner_radius=16, border_width=1)
+        super().__init__(parent)
         self.sound = sound
-        self._default_border_color = self.cget("border_color")
-        self._default_fg_color = self.cget("fg_color")
+        self._on_play = on_play
+        self._on_stop = on_stop
+        self._on_edit = on_edit
+        self._on_remove = on_remove
 
-        self.grid_columnconfigure(0, weight=1)
+        self.setObjectName("SoundCard")
+        self.setProperty("active", False)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
-        self.name_label = ctk.CTkLabel(
-            self,
-            text=sound.display_name,
-            font=ctk.CTkFont(size=22, weight="bold"),
-            anchor="w",
-        )
-        self.name_label.grid(row=0, column=0, sticky="ew", padx=16, pady=(16, 6))
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
 
-        self.file_label = ctk.CTkLabel(
-            self,
-            text=Path(sound.file_path).name,
-            anchor="w",
-            justify="left",
-            text_color=("gray35", "gray75"),
-        )
-        self.file_label.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 14))
+        self.name_label = QLabel(sound.display_name)
+        self.name_label.setFont(QFont("Segoe UI", 18, QFont.Weight.Bold))
+        self.name_label.setWordWrap(True)
+        layout.addWidget(self.name_label)
 
-        controls_frame = ctk.CTkFrame(self, fg_color="transparent")
-        controls_frame.grid(row=2, column=0, sticky="ew", padx=16, pady=(0, 16))
-        controls_frame.grid_columnconfigure(0, weight=1)
-        controls_frame.grid_columnconfigure(1, weight=1)
+        self.file_label = QLabel(Path(sound.file_path).name)
+        self.file_label.setObjectName("MutedLabel")
+        self.file_label.setWordWrap(True)
+        layout.addWidget(self.file_label)
 
-        self.play_button = ctk.CTkButton(
-            controls_frame,
-            text="Play",
-            command=lambda: on_play(self.sound.id),
-        )
-        self.play_button.grid(row=0, column=0, sticky="ew", padx=(0, 6), pady=(0, 8))
+        controls_layout = QGridLayout()
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setHorizontalSpacing(12)
+        controls_layout.setVerticalSpacing(8)
+        layout.addLayout(controls_layout)
 
-        self.stop_button = ctk.CTkButton(
-            controls_frame,
-            text="Stop",
-            fg_color="#9b1c1c",
-            hover_color="#7f1d1d",
-            state="disabled",
-            command=lambda: on_stop(self.sound.id),
-        )
-        self.stop_button.grid(row=0, column=1, sticky="ew", padx=(6, 0), pady=(0, 8))
+        self.play_button = QPushButton("Play")
+        self.play_button.clicked.connect(lambda: self._on_play(self.sound.id))
+        controls_layout.addWidget(self.play_button, 0, 0)
 
-        self.edit_button = ctk.CTkButton(
-            controls_frame,
-            text="Edit",
-            fg_color="transparent",
-            border_width=1,
-            command=lambda: on_edit(self.sound.id),
-        )
-        self.edit_button.grid(row=1, column=0, sticky="ew", padx=(0, 6))
+        self.stop_button = QPushButton("Stop")
+        self.stop_button.setObjectName("DangerButton")
+        self.stop_button.setEnabled(False)
+        self.stop_button.clicked.connect(lambda: self._on_stop(self.sound.id))
+        controls_layout.addWidget(self.stop_button, 0, 1)
 
-        self.remove_button = ctk.CTkButton(
-            controls_frame,
-            text="Remove",
-            fg_color="transparent",
-            border_width=1,
-            command=lambda: on_remove(self.sound.id),
-        )
-        self.remove_button.grid(row=1, column=1, sticky="ew", padx=(6, 0))
+        self.edit_button = QPushButton("Edit")
+        self.edit_button.setObjectName("OutlineButton")
+        self.edit_button.clicked.connect(lambda: self._on_edit(self.sound.id))
+        controls_layout.addWidget(self.edit_button, 1, 0)
+
+        self.remove_button = QPushButton("Remove")
+        self.remove_button.setObjectName("OutlineButton")
+        self.remove_button.clicked.connect(lambda: self._on_remove(self.sound.id))
+        controls_layout.addWidget(self.remove_button, 1, 1)
 
     def update_sound(self, sound: SoundEntry) -> None:
         self.sound = sound
-        self.name_label.configure(text=sound.display_name)
-        self.file_label.configure(text=Path(sound.file_path).name)
+        self.name_label.setText(sound.display_name)
+        self.file_label.setText(Path(sound.file_path).name)
 
     def set_active(self, active: bool) -> None:
-        self.configure(
-            border_width=2 if active else 1,
-            border_color="#2563eb" if active else self._default_border_color,
-            fg_color=("#dbeafe", "#1f2937") if active else self._default_fg_color,
-        )
-        self.play_button.configure(state="disabled" if active else "normal")
-        self.stop_button.configure(state="normal" if active else "disabled")
+        self.setProperty("active", active)
+        self.play_button.setEnabled(not active)
+        self.stop_button.setEnabled(active)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.update()
 
 
-class DiscordAudioSoundboardApp(ctk.CTk):
+class _PlaybackBridge(QObject):
+    playback_finished = Signal(bool)
+    playback_error = Signal(object)
+
+
+class DiscordAudioSoundboardApp(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.title("Discord Audio Soundboard")
-        self.geometry("900x600")
-        self.minsize(760, 500)
+        self.setWindowTitle("Discord Audio Soundboard")
+        self.resize(900, 600)
+        self.setMinimumSize(760, 500)
 
         self.player = AudioPlayer()
         self.app_config = load_config()
@@ -137,151 +268,160 @@ class DiscordAudioSoundboardApp(ctk.CTk):
         self.after_stop_action: Callable[[], None] | None = None
         self.is_closing = False
         self._sound_grid_columns = DEFAULT_CARD_COLUMNS
-        self._resize_after_id: str | None = None
-        self._last_window_width: int = 0
+        self._resize_pending = False
+        self._last_window_width = 0
 
         current_mic_name = self._safe_current_mic_name()
 
-        self.status_var = tk.StringVar(value="Ready")
-        self.microphone_var = tk.StringVar(value=f"Current microphone: {current_mic_name}")
-        self.playback_device_var = tk.StringVar(value="Virtual playback device: not resolved yet")
-        self.volume_var = tk.DoubleVar(value=self.app_config.global_volume)
-        self.volume_text_var = tk.StringVar()
+        self.status_text = "Ready"
+        self.microphone_text = f"Current microphone: {current_mic_name}"
+        self.playback_device_text = "Virtual playback device: not resolved yet"
+        self.volume_value = float(self.app_config.global_volume)
+
+        self.playback_bridge = _PlaybackBridge(self)
+        self.playback_bridge.playback_finished.connect(self._on_playback_finished)
+        self.playback_bridge.playback_error.connect(self._on_playback_error)
 
         self._build_ui()
         self._update_volume_label()
         self._render_sound_cards()
-        self.protocol("WM_DELETE_WINDOW", self._on_close)
-        self.bind("<Configure>", self._on_window_resize)
 
     def _build_ui(self) -> None:
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(0, weight=1)
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
 
-        container = ctk.CTkFrame(self, corner_radius=18)
-        container.grid(row=0, column=0, sticky="nsew", padx=24, pady=24)
-        container.grid_columnconfigure(0, weight=1)
-        container.grid_rowconfigure(3, weight=1)
+        root_layout = QVBoxLayout(central_widget)
+        root_layout.setContentsMargins(24, 24, 24, 24)
 
-        title = ctk.CTkLabel(
-            container,
-            text="Discord Audio Soundboard",
-            font=ctk.CTkFont(size=28, weight="bold"),
+        container = QFrame()
+        container.setObjectName("Container")
+        root_layout.addWidget(container)
+
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(24, 24, 24, 24)
+        container_layout.setSpacing(12)
+
+        title = QLabel("Discord Audio Soundboard")
+        title.setFont(QFont("Segoe UI", 28, QFont.Weight.Bold))
+        container_layout.addWidget(title)
+
+        description = QLabel(
+            "Save your sounds locally, label them with text or emoji, and play them through VB-Cable."
         )
-        title.grid(row=0, column=0, sticky="w", padx=24, pady=(24, 12))
+        description.setWordWrap(True)
+        container_layout.addWidget(description)
 
-        description = ctk.CTkLabel(
-            container,
-            text="Save your sounds locally, label them with text or emoji, and play them through VB-Cable.",
-            anchor="w",
-            justify="left",
-        )
-        description.grid(row=1, column=0, sticky="ew", padx=24)
+        toolbar = QFrame()
+        toolbar.setObjectName("Toolbar")
+        container_layout.addWidget(toolbar)
 
-        toolbar = ctk.CTkFrame(container)
-        toolbar.grid(row=2, column=0, sticky="ew", padx=24, pady=(20, 12))
-        toolbar.grid_columnconfigure(1, weight=1)
+        toolbar_layout = QHBoxLayout(toolbar)
+        toolbar_layout.setContentsMargins(18, 18, 18, 18)
+        toolbar_layout.setSpacing(18)
 
-        add_sound_button = ctk.CTkButton(
-            toolbar,
-            text="Add Sound",
-            width=150,
-            command=self.add_sound,
-        )
-        add_sound_button.grid(row=0, column=0, padx=18, pady=18, sticky="w")
+        add_sound_button = QPushButton("Add Sound")
+        add_sound_button.setFixedWidth(150)
+        add_sound_button.clicked.connect(self.add_sound)
+        toolbar_layout.addWidget(add_sound_button)
 
-        volume_frame = ctk.CTkFrame(toolbar, fg_color="transparent")
-        volume_frame.grid(row=0, column=1, sticky="ew", padx=(0, 18), pady=18)
-        volume_frame.grid_columnconfigure(0, weight=1)
+        volume_frame = QFrame()
+        volume_frame.setObjectName("TransparentFrame")
+        toolbar_layout.addWidget(volume_frame, stretch=1)
 
-        volume_label = ctk.CTkLabel(
-            volume_frame,
-            text="Playback volume",
-            font=ctk.CTkFont(size=16, weight="bold"),
-        )
-        volume_label.grid(row=0, column=0, sticky="w")
+        volume_layout = QGridLayout(volume_frame)
+        volume_layout.setContentsMargins(0, 0, 0, 0)
+        volume_layout.setHorizontalSpacing(12)
+        volume_layout.setVerticalSpacing(8)
 
-        volume_value = ctk.CTkLabel(volume_frame, textvariable=self.volume_text_var)
-        volume_value.grid(row=0, column=1, sticky="e", padx=(12, 0))
+        volume_label = QLabel("Playback volume")
+        volume_label.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        volume_layout.addWidget(volume_label, 0, 0)
 
-        volume_slider = ctk.CTkSlider(
-            volume_frame,
-            from_=0,
-            to=100,
-            variable=self.volume_var,
-            number_of_steps=100,
-            command=self._on_volume_changed,
-        )
-        volume_slider.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        self.volume_value_label = QLabel()
+        self.volume_value_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        volume_layout.addWidget(self.volume_value_label, 0, 1)
 
-        self.sounds_frame = ctk.CTkScrollableFrame(
-            container,
-            label_text="Sounds",
-            corner_radius=16,
-        )
-        self.sounds_frame.grid(row=3, column=0, sticky="nsew", padx=24, pady=(0, 12))
+        self.volume_slider = QSlider(Qt.Orientation.Horizontal)
+        self.volume_slider.setRange(0, 100)
+        self.volume_slider.setValue(int(round(self.volume_value)))
+        self.volume_slider.valueChanged.connect(self._on_volume_changed)
+        volume_layout.addWidget(self.volume_slider, 1, 0, 1, 2)
 
-        status_frame = ctk.CTkFrame(container)
-        status_frame.grid(row=4, column=0, sticky="ew", padx=24, pady=(0, 24))
-        status_frame.grid_columnconfigure(0, weight=1)
+        sounds_title = QLabel("Sounds")
+        sounds_title.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        container_layout.addWidget(sounds_title)
 
-        status_label = ctk.CTkLabel(
-            status_frame,
-            textvariable=self.status_var,
-            font=ctk.CTkFont(size=18, weight="bold"),
-            anchor="w",
-            justify="left",
-        )
-        status_label.grid(row=0, column=0, sticky="ew", padx=18, pady=(16, 8))
+        self.sounds_scroll_area = QScrollArea()
+        self.sounds_scroll_area.setWidgetResizable(True)
+        container_layout.addWidget(self.sounds_scroll_area, stretch=1)
 
-        mic_label = ctk.CTkLabel(status_frame, textvariable=self.microphone_var, anchor="w")
-        mic_label.grid(row=1, column=0, sticky="ew", padx=18, pady=4)
+        self.sounds_container = QWidget()
+        self.sounds_grid = QGridLayout(self.sounds_container)
+        self.sounds_grid.setContentsMargins(12, 12, 12, 12)
+        self.sounds_grid.setHorizontalSpacing(10)
+        self.sounds_grid.setVerticalSpacing(10)
+        self.sounds_scroll_area.setWidget(self.sounds_container)
 
-        playback_label = ctk.CTkLabel(
-            status_frame,
-            textvariable=self.playback_device_var,
-            anchor="w",
-            justify="left",
-        )
-        playback_label.grid(row=2, column=0, sticky="ew", padx=18, pady=(4, 16))
+        status_frame = QFrame()
+        status_frame.setObjectName("StatusFrame")
+        container_layout.addWidget(status_frame)
+
+        status_layout = QVBoxLayout(status_frame)
+        status_layout.setContentsMargins(18, 16, 18, 16)
+        status_layout.setSpacing(8)
+
+        self.status_label = QLabel(self.status_text)
+        self.status_label.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
+        self.status_label.setWordWrap(True)
+        status_layout.addWidget(self.status_label)
+
+        self.microphone_label = QLabel(self.microphone_text)
+        self.microphone_label.setWordWrap(True)
+        status_layout.addWidget(self.microphone_label)
+
+        self.playback_device_label = QLabel(self.playback_device_text)
+        self.playback_device_label.setWordWrap(True)
+        status_layout.addWidget(self.playback_device_label)
 
     def _render_sound_cards(self) -> None:
-        for widget in self.sounds_frame.winfo_children():
-            widget.destroy()
+        while self.sounds_grid.count():
+            item = self.sounds_grid.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
 
         self.sound_cards.clear()
-
         self._configure_grid_columns()
 
         if not self.app_config.sounds:
-            empty_label = ctk.CTkLabel(
-                self.sounds_frame,
-                text="No sounds saved yet. Use Add Sound to build your board.",
-                justify="center",
-            )
-            empty_label.grid(row=0, column=0, padx=12, pady=24, sticky="ew")
+            empty_label = QLabel("No sounds saved yet. Use Add Sound to build your board.")
+            empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            empty_label.setWordWrap(True)
+            self.sounds_grid.addWidget(empty_label, 0, 0)
             return
 
         for index, sound in enumerate(self.app_config.sounds):
             row = index // self._sound_grid_columns
             column = index % self._sound_grid_columns
             card = SoundCard(
-                self.sounds_frame,
                 sound=sound,
                 on_play=self.play_sound,
                 on_stop=self.stop_sound,
                 on_edit=self.edit_sound,
                 on_remove=self.remove_sound,
             )
-            card.grid(row=row, column=column, sticky="nsew", padx=10, pady=10)
+            self.sounds_grid.addWidget(card, row, column)
             card.set_active(sound.id == self.active_sound_id)
             self.sound_cards[sound.id] = card
+
+        self.sounds_grid.setRowStretch((len(self.app_config.sounds) - 1) // self._sound_grid_columns + 1, 1)
 
     def _configure_grid_columns(self) -> None:
         active_columns = self._sound_grid_columns
         for column in range(MAX_CARD_COLUMNS + 1):
             weight = 1 if column < active_columns else 0
-            self.sounds_frame.grid_columnconfigure(column, weight=weight)
+            self.sounds_grid.setColumnStretch(column, weight)
 
     def _relayout_sound_cards(self) -> None:
         if not self.sound_cards:
@@ -294,38 +434,35 @@ class DiscordAudioSoundboardApp(ctk.CTk):
                 continue
             row = index // self._sound_grid_columns
             column = index % self._sound_grid_columns
-            card.grid_configure(row=row, column=column)
+            self.sounds_grid.addWidget(card, row, column)
 
     def _update_volume_label(self) -> None:
-        self.volume_text_var.set(f"{int(self.volume_var.get())}%")
+        self.volume_value_label.setText(f"{int(self.volume_value)}%")
 
-    def _on_volume_changed(self, _value: float) -> None:
+    def _on_volume_changed(self, value: int) -> None:
+        self.volume_value = float(value)
         self._update_volume_label()
-        self.app_config.global_volume = self.volume_var.get()
+        self.app_config.global_volume = self.volume_value
         self._save_config()
 
-    def _on_window_resize(self, _event) -> None:
-        if _event.widget is not self:
-            return
-
-        current_width = self.winfo_width()
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        current_width = self.width()
         if current_width == self._last_window_width:
             return
         self._last_window_width = current_width
 
-        if self._resize_after_id is not None:
-            try:
-                self.after_cancel(self._resize_after_id)
-            except tk.TclError:
-                pass
-        self._resize_after_id = self.after(80, self._apply_resize_layout)
+        if self._resize_pending:
+            return
+        self._resize_pending = True
+        QTimer.singleShot(80, self._apply_resize_layout)
 
     def _apply_resize_layout(self) -> None:
-        self._resize_after_id = None
+        self._resize_pending = False
         if self.is_closing:
             return
 
-        available_width = max(self.winfo_width() - 140, CARD_MIN_WIDTH)
+        available_width = max(self.width() - 140, CARD_MIN_WIDTH)
         columns = max(1, min(MAX_CARD_COLUMNS, available_width // CARD_MIN_WIDTH))
         if columns == self._sound_grid_columns:
             return
@@ -333,19 +470,12 @@ class DiscordAudioSoundboardApp(ctk.CTk):
         self._sound_grid_columns = columns
         self._relayout_sound_cards()
 
-    def _schedule_callback(self, callback, *args) -> None:
-        if self.is_closing:
-            return
-
-        try:
-            self.after(0, callback, *args)
-        except tk.TclError:
-            return
-
     def add_sound(self) -> None:
-        file_path = filedialog.askopenfilename(
-            title="Select an audio file",
-            filetypes=SUPPORTED_FILE_TYPES,
+        file_path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "Select an audio file",
+            "",
+            SUPPORTED_FILE_FILTER,
         )
         if not file_path:
             return
@@ -362,7 +492,7 @@ class DiscordAudioSoundboardApp(ctk.CTk):
         self.app_config.sounds.append(sound)
         self._save_config()
         self._render_sound_cards()
-        self.status_var.set(f'Added "{sound.display_name}".')
+        self._set_status(f'Added "{sound.display_name}".')
 
     def edit_sound(self, sound_id: str) -> None:
         sound = self._get_sound(sound_id)
@@ -380,26 +510,28 @@ class DiscordAudioSoundboardApp(ctk.CTk):
         sound.display_name = display_name
         self._save_config()
         self._render_sound_cards()
-        self.status_var.set(f'Updated "{sound.display_name}".')
+        self._set_status(f'Updated "{sound.display_name}".')
 
     def remove_sound(self, sound_id: str) -> None:
         sound = self._get_sound(sound_id)
         if sound is None:
             return
 
-        confirmed = messagebox.askyesno(
+        result = QMessageBox.question(
+            self,
             "Remove sound",
             f'Are you sure you want to remove "{sound.display_name}" from the board?',
-            parent=self,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
-        if not confirmed:
+        if result != QMessageBox.StandardButton.Yes:
             return
 
         if self.active_sound_id == sound_id and self.player.is_playing():
             self.after_stop_action = lambda current_sound_id=sound_id: self._remove_sound_by_id(
                 current_sound_id
             )
-            self.status_var.set(f'Stopping "{sound.display_name}" before removing it...')
+            self._set_status(f'Stopping "{sound.display_name}" before removing it...')
             self._stop_current_playback()
             return
 
@@ -417,7 +549,7 @@ class DiscordAudioSoundboardApp(ctk.CTk):
             self.after_stop_action = lambda current_sound_id=sound_id: self._start_sound_by_id(
                 current_sound_id
             )
-            self.status_var.set(f'Switching playback to "{sound.display_name}"...')
+            self._set_status(f'Switching playback to "{sound.display_name}"...')
             self._stop_current_playback()
             return
 
@@ -429,7 +561,7 @@ class DiscordAudioSoundboardApp(ctk.CTk):
 
         self.after_stop_action = None
         active_sound = self._get_sound(sound_id)
-        self.status_var.set(
+        self._set_status(
             f'Stopping "{active_sound.display_name}"...' if active_sound is not None else "Stopping playback..."
         )
         self._stop_current_playback()
@@ -457,29 +589,27 @@ class DiscordAudioSoundboardApp(ctk.CTk):
 
             self.player.play(
                 device_indices=device_indices,
-                volume=self.volume_var.get() / 100.0,
-                on_finished=lambda interrupted: self._schedule_callback(
-                    self._on_playback_finished, interrupted
-                ),
-                on_error=lambda exc: self._schedule_callback(self._on_playback_error, exc),
+                volume=self.volume_value / 100.0,
+                on_finished=self.playback_bridge.playback_finished.emit,
+                on_error=self.playback_bridge.playback_error.emit,
             )
         except (AudioPlayerError, DeviceManagerError) as exc:
             self.after_stop_action = None
             self._restore_previous_microphone()
-            messagebox.showerror("Playback error", str(exc), parent=self)
-            self.status_var.set("Playback failed.")
+            QMessageBox.critical(self, "Playback error", str(exc))
+            self._set_status("Playback failed.")
             return
         except Exception as exc:
             self.after_stop_action = None
             self._restore_previous_microphone()
-            messagebox.showerror("Unexpected error", str(exc), parent=self)
-            self.status_var.set("Playback failed.")
+            QMessageBox.critical(self, "Unexpected error", str(exc))
+            self._set_status("Playback failed.")
             return
 
         self.active_sound_id = sound.id
-        self.status_var.set(f'Playing "{sound.display_name}" through VB-Cable...')
-        self.microphone_var.set(f"Current microphone: {virtual_microphone.name}")
-        self.playback_device_var.set(
+        self._set_status(f'Playing "{sound.display_name}" through VB-Cable...')
+        self._set_microphone(f"Current microphone: {virtual_microphone.name}")
+        self._set_playback_device(
             f"Virtual playback device: {playback_device_name}\nLocal speaker: {speaker_label}"
         )
         self._refresh_card_states()
@@ -489,7 +619,7 @@ class DiscordAudioSoundboardApp(ctk.CTk):
             return
 
         if self.active_sound_id in self.sound_cards:
-            self.sound_cards[self.active_sound_id].stop_button.configure(state="disabled")
+            self.sound_cards[self.active_sound_id].stop_button.setEnabled(False)
         self.player.stop()
 
     def _on_playback_finished(self, interrupted: bool) -> None:
@@ -506,17 +636,17 @@ class DiscordAudioSoundboardApp(ctk.CTk):
             return
 
         if finished_sound is not None and not interrupted:
-            self.status_var.set(f'Finished "{finished_sound.display_name}".')
+            self._set_status(f'Finished "{finished_sound.display_name}".')
         else:
-            self.status_var.set("Playback stopped." if interrupted else "Playback finished.")
+            self._set_status("Playback stopped." if interrupted else "Playback finished.")
 
-    def _on_playback_error(self, error: Exception) -> None:
+    def _on_playback_error(self, error: object) -> None:
         self.after_stop_action = None
         self._restore_previous_microphone()
         self.active_sound_id = None
         self._refresh_card_states()
-        self.status_var.set("Playback failed.")
-        messagebox.showerror("Playback error", str(error), parent=self)
+        self._set_status("Playback failed.")
+        QMessageBox.critical(self, "Playback error", str(error))
 
     def _refresh_card_states(self) -> None:
         for sound_id, card in self.sound_cards.items():
@@ -532,7 +662,7 @@ class DiscordAudioSoundboardApp(ctk.CTk):
         self._save_config()
         self._render_sound_cards()
         removed_name = removed_sound.display_name if removed_sound is not None else "sound"
-        self.status_var.set(f'Removed "{removed_name}".')
+        self._set_status(f'Removed "{removed_name}".')
 
     def _prompt_for_sound_name(
         self,
@@ -540,22 +670,13 @@ class DiscordAudioSoundboardApp(ctk.CTk):
         prompt: str,
         initial_value: str,
     ) -> str | None:
-        response = simpledialog.askstring(
-            title,
-            prompt,
-            parent=self,
-            initialvalue=initial_value,
-        )
-        if response is None:
+        response, accepted = QInputDialog.getText(self, title, prompt, text=initial_value)
+        if not accepted:
             return None
 
         response = response.strip()
         if not response:
-            messagebox.showwarning(
-                "Missing name",
-                "Enter a display name or emoji for the sound.",
-                parent=self,
-            )
+            QMessageBox.warning(self, "Missing name", "Enter a display name or emoji for the sound.")
             return None
         return response
 
@@ -566,25 +687,25 @@ class DiscordAudioSoundboardApp(ctk.CTk):
         return None
 
     def _save_config(self) -> None:
-        self.app_config.global_volume = self.volume_var.get()
+        self.app_config.global_volume = self.volume_value
         save_config(self.app_config)
 
     def _restore_previous_microphone(self) -> None:
         if not self.previous_microphone_snapshot:
-            self.microphone_var.set(f"Current microphone: {self._safe_current_mic_name()}")
+            self._set_microphone(f"Current microphone: {self._safe_current_mic_name()}")
             return
 
         try:
             restore_default_recording_devices(self.previous_microphone_snapshot)
         except DeviceManagerError as exc:
-            messagebox.showwarning(
+            QMessageBox.warning(
+                self,
                 "Microphone restore failed",
                 f"Playback stopped, but the previous microphone could not be restored automatically.\n\n{exc}",
-                parent=self,
             )
         finally:
             self.previous_microphone_snapshot = None
-            self.microphone_var.set(f"Current microphone: {self._safe_current_mic_name()}")
+            self._set_microphone(f"Current microphone: {self._safe_current_mic_name()}")
 
     def _safe_current_mic_name(self) -> str:
         try:
@@ -592,21 +713,34 @@ class DiscordAudioSoundboardApp(ctk.CTk):
         except DeviceManagerError:
             return "Unavailable"
 
-    def _on_close(self) -> None:
+    def _set_status(self, text: str) -> None:
+        self.status_text = text
+        self.status_label.setText(text)
+
+    def _set_microphone(self, text: str) -> None:
+        self.microphone_text = text
+        self.microphone_label.setText(text)
+
+    def _set_playback_device(self, text: str) -> None:
+        self.playback_device_text = text
+        self.playback_device_label.setText(text)
+
+    def closeEvent(self, event: QCloseEvent) -> None:
         self.is_closing = True
         self.after_stop_action = None
         self._save_config()
         if self.player.is_playing():
             self.player.stop()
         self._restore_previous_microphone()
-        self.destroy()
+        event.accept()
 
 
 def main() -> None:
-    ctk.set_appearance_mode("dark")
-    ctk.set_default_color_theme("dark-blue")
-    app = DiscordAudioSoundboardApp()
-    app.mainloop()
+    app = QApplication(sys.argv)
+    app.setStyleSheet(DARK_QSS)
+    window = DiscordAudioSoundboardApp()
+    window.show()
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":

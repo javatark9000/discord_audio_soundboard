@@ -4,7 +4,7 @@ Desktop soundboard for Windows that plays a selected audio file through a VB-Aud
 
 ## Features
 
-- Modern desktop UI built with `customtkinter`
+- Modern desktop UI built with `PySide6` (Qt for Python)
 - Select a single audio file and play it into Discord
 - Automatically switch the Windows default recording device to `CABLE Output`
 - Automatically restore the previous microphone when playback finishes or you press `Stop`
@@ -136,7 +136,7 @@ This project is licensed under the [MIT License](LICENSE).
 
 | Library | License |
 |---|---|
-| [customtkinter](https://github.com/TomSchimansky/CustomTkinter) | MIT |
+| [PySide6](https://doc.qt.io/qtforpython-6/) | LGPL-3.0 |
 | [sounddevice](https://github.com/spatialaudio/python-sounddevice) | MIT |
 | [soundfile](https://github.com/bastibe/python-soundfile) | BSD-3-Clause (uses [libsndfile](http://www.mega-nerd.com/libsndfile/) under LGPL-2.1+) |
 | [pydub](https://github.com/jiaaro/pydub) | MIT |
